@@ -368,14 +368,7 @@ def render_sidebar() -> str:
             st.session_state["username"] = username
 
         st.markdown("---")
-        page = st.selectbox(
-            "Navigate",
-            ["🏠 Home", "📸 Analyse Meal", "📊 Daily Tracker",
-             "👤 My Profile", "ℹ️  About"],
-            label_visibility="collapsed",
-        )
-
-        
+               
         # Your selectbox code
         page = st.selectbox(
             "Navigate", 
