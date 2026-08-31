@@ -185,18 +185,18 @@ def build_model(
     log.info(f"[Model] Built {arch}: "
              f"total={params['total']:,} | trainable={params['trainable']:,}")
     return model
-import os
-print("=== CHECKPOINT DEBUG ===", flush=True)
-print("Path:", checkpoint_path, flush=True)
-print("Exists:", os.path.exists(checkpoint_path), flush=True)
-print("Size (bytes):", os.path.getsize(checkpoint_path) if os.path.exists(checkpoint_path) else "N/A", flush=True)
-try:
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-except Exception as e:
-    print("=== TORCH.LOAD FAILED ===", flush=True)
-    print("Exception type:", type(e).__name__, flush=True)
-    print("Exception message:", repr(e), flush=True)
-    raise
+# import os
+# print("=== CHECKPOINT DEBUG ===", flush=True)
+# print("Path:", checkpoint_path, flush=True)
+# print("Exists:", os.path.exists(checkpoint_path), flush=True)
+# print("Size (bytes):", os.path.getsize(checkpoint_path) if os.path.exists(checkpoint_path) else "N/A", flush=True)
+# try:
+#     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+# except Exception as e:
+#     print("=== TORCH.LOAD FAILED ===", flush=True)
+#     print("Exception type:", type(e).__name__, flush=True)
+#     print("Exception message:", repr(e), flush=True)
+#     raise
 
 def load_model(
     checkpoint_path: Path,
