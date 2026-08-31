@@ -368,12 +368,11 @@ def render_sidebar() -> str:
             st.session_state["username"] = username
 
         st.markdown("---")
-               
-        # Your selectbox code
         page = st.selectbox(
-            "Navigate", 
-            ["🏠 Home", "📸 Analyse Meal", "📊 Daily Tracker", "👤 My Profile", "ℹ️ About"], 
-            label_visibility="collapsed"
+            "Navigate",
+            ["🏠 Home", "📸 Analyse Meal", "📊 Daily Tracker",
+             "👤 My Profile", "ℹ️  About"],
+            label_visibility="collapsed",
         )
         # "📈 Model Insights"
         # Quick stats in sidebar
@@ -1147,8 +1146,8 @@ def page_about():
     st.markdown("---")
     st.markdown("""
     <div style="text-align:center;color:#94a3b8;font-size:0.85rem;padding:20px 0;">
-      NutriVision AI v1.0 · Built with PyTorch, Streamlit & other liberies ·
-      Academic Masters Research Project · Joshua Nnorom
+      NutriVision AI v1.0 · Built with PyTorch, Streamlit & 💙 ·
+      Academic Research Project · SchoolDev Technologies
     </div>
     """, unsafe_allow_html=True)
 
