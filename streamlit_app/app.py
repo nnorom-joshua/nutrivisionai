@@ -367,12 +367,28 @@ def render_sidebar() -> str:
         if username:
             st.session_state["username"] = username
 
-        st.markdown("---")
+        st.markdown(
+            """
+            <style>
+            /* Targets the selected value text */
+            div[data-baseweb="select"] div {
+                color: white !important;
+            }
+            /* Targets the dropdown options text */
+            ul[role="listbox"] li {
+                color: white !important;
+                background-color: #333333; /* Optional: sets a dark background so white text is visible */
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        # Your selectbox code
         page = st.selectbox(
-            "Navigate",
-            ["🏠 Home", "📸 Analyse Meal", "📊 Daily Tracker",
-             "👤 My Profile", "ℹ️  About"],
-            label_visibility="collapsed",
+            "Navigate", 
+            ["🏠 Home", "📸 Analyse Meal", "📊 Daily Tracker", "👤 My Profile", "ℹ️ About"], 
+            label_visibility="collapsed"
         )
         # "📈 Model Insights"
         # Quick stats in sidebar
