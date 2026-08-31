@@ -1,0 +1,17 @@
+{
+  "results": {
+    "efficientnet_b0": {
+      "val_acc": 0.0,
+      "status": "'Subset' object has no attribute 'classes'"
+    },
+    "resnet50": {
+      "val_acc": 0.0,
+      "status": "'Subset' object has no attribute 'classes'"
+    },
+    "mobilenetv3_large_100": {
+      "val_acc": 0.0,
+      "status": "'Subset' object has no attribute 'classes'"
+    }
+  },
+  "winner": "efficientnet_b0"
+}

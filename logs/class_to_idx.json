@@ -1,0 +1,22 @@
+{
+  "apple_pie": 0,
+  "caesar_salad": 1,
+  "cheesecake": 2,
+  "chicken_wings": 3,
+  "donut": 4,
+  "french_fries": 5,
+  "fried_rice": 6,
+  "grilled_cheese_sandwich": 7,
+  "hamburger": 8,
+  "hot_dog": 9,
+  "ice_cream": 10,
+  "omelette": 11,
+  "pancakes": 12,
+  "pizza": 13,
+  "ramen": 14,
+  "spaghetti_bolognese": 15,
+  "steak": 16,
+  "sushi": 17,
+  "tacos": 18,
+  "waffles": 19
+}
