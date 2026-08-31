@@ -1146,8 +1146,8 @@ def page_about():
     st.markdown("---")
     st.markdown("""
     <div style="text-align:center;color:#94a3b8;font-size:0.85rem;padding:20px 0;">
-      NutriVision AI v1.0 · Built with PyTorch, Streamlit & 💙 ·
-      Academic Research Project · SchoolDev Technologies
+      NutriVision AI v1.0 · Built with PyTorch, Streamlit & other liberies ·
+      Academic Masters Research Project · Joshua Nnorom
     </div>
     """, unsafe_allow_html=True)
 
