@@ -8,6 +8,7 @@ Real-time inference pipeline:
 """
 
 import logging
+import cv2
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -100,6 +101,89 @@ def estimate_portion(food_name: str, bbox_area: Optional[float] = None,
         scale = max(0.4, min(2.0, area_ratio * 4))
         return round(base * scale)
     return float(base)
+
+
+# ── Class-agnostic region segmentation (YOLO fallback) ───────────────────────
+def segment_food_regions(
+    image: Image.Image,
+    min_area_ratio: float = 0.03,
+    max_area_ratio: float = 0.65,
+    max_regions: int = 4,
+) -> List[Tuple[int, int, int, int]]:
+    """
+    Splits an image into candidate food regions without needing to know what
+    the food is. Used when YOLO (trained on COCO's 80 classes) fails to find
+    any boxes -- which happens for most Food-101 dishes since they aren't
+    COCO categories.
+
+    Strategy:
+      1. Cluster pixels by colour in LAB space into a handful of groups.
+      2. Identify the cluster that most resembles background/plate (the one
+         with the most image-border pixels) and discard it.
+      3. Extract contours -> bounding boxes from the remaining clusters.
+      4. Drop boxes that are too small, too large (likely still background),
+         or near-duplicates of a larger box.
+
+    Returns a list of (x1, y1, x2, y2) boxes. Classification of each crop is
+    still done downstream by FoodPredictor -- this function only proposes
+    regions, it never predicts a class itself.
+    """
+    img_np = np.array(image.convert("RGB"))
+    h, w = img_np.shape[:2]
+    img_area = h * w
+
+    lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
+    Z = lab.reshape((-1, 3)).astype(np.float32)
+
+    k = max_regions
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+    _, labels, _ = cv2.kmeans(Z, k, None, criteria, 5, cv2.KMEANS_PP_CENTERS)
+    labels = labels.reshape((h, w))
+
+    border_mask = np.zeros((h, w), dtype=bool)
+    border_mask[0, :] = border_mask[-1, :] = True
+    border_mask[:, 0] = border_mask[:, -1] = True
+    border_counts = [int(((labels == cid) & border_mask).sum()) for cid in range(k)]
+    bg_cluster = int(np.argmax(border_counts))
+
+    boxes = []
+    for cid in range(k):
+        if cid == bg_cluster:
+            continue
+        mask = np.uint8(labels == cid) * 255
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            area = cv2.contourArea(c)
+            ratio = area / img_area
+            if ratio < min_area_ratio or ratio > max_area_ratio:
+                continue
+            x, y, bw, bh = cv2.boundingRect(c)
+            boxes.append((x, y, x + bw, y + bh, area))
+
+    if not boxes:
+        return []
+
+    boxes.sort(key=lambda b: b[4], reverse=True)
+    kept = []
+    for b in boxes:
+        x1, y1, x2, y2, area = b
+        is_dup = False
+        for kx1, ky1, kx2, ky2, _ in kept:
+            ix1, iy1 = max(x1, kx1), max(y1, ky1)
+            ix2, iy2 = min(x2, kx2), min(y2, ky2)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            if inter / area > 0.85:
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append(b)
+        if len(kept) >= max_regions:
+            break
+
+    return [(x1, y1, x2, y2) for x1, y1, x2, y2, _ in kept]
 
 
 # ─── Classifier Inference ─────────────────────────────────────────────────────
@@ -259,9 +343,46 @@ class MultiFoodDetector:
                         return {"mode": "multi", "detections": detections}
 
             except Exception as e:
-                log.warning(f"[YOLO] Detection failed: {e}. Using full-image fallback.")
+                log.warning(f"[YOLO] Detection failed: {e}. Trying segmentation fallback.")
 
-        # ── Fallback: full-image single classification ─────────────────────
+        # ── Fallback 1: class-agnostic segmentation ──────────────────────────
+        # YOLO (COCO-pretrained) returns no boxes for most Food-101 dishes
+        # since they aren't COCO categories. Before giving up to single-image
+        # mode, try splitting the image into food-shaped regions by colour/
+        # texture and classify each one independently.
+        try:
+            regions = segment_food_regions(image)
+        except Exception as e:
+            log.warning(f"[Segmentation] Failed: {e}. Using full-image fallback.")
+            regions = []
+
+        if len(regions) > 1:
+            detections = []
+            for (x1, y1, x2, y2) in regions:
+                crop      = image.crop((x1, y1, x2, y2))
+                bbox_area = (x2 - x1) * (y2 - y1)
+                preds     = self.predictor.predict(crop, top_k=top_k)
+                top_pred  = preds[0] if preds else {}
+                food_name = top_pred.get("food_name", "unknown")
+                portion_g = estimate_portion(food_name, bbox_area, img_area)
+                nutrition = get_nutrition(food_name, portion_g)
+
+                detections.append({
+                    "bbox":         [x1, y1, x2, y2],
+                    "yolo_conf":    None,
+                    "source":       "segmentation",
+                    "predictions":  preds,
+                    "top_prediction": top_pred,
+                    "food_name":    food_name,
+                    "display_name": food_name.replace("_", " ").title(),
+                    "portion_g":    portion_g,
+                    "nutrition":    nutrition,
+                })
+
+            if detections:
+                return {"mode": "multi", "detections": detections}
+
+        # ── Fallback 2: full-image single classification ────────────────────
         preds     = self.predictor.predict(image, top_k=top_k)
         top_pred  = preds[0] if preds else {}
         food_name = top_pred.get("food_name", "unknown")
