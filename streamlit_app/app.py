@@ -50,7 +50,11 @@ from src.bmi_recommender import (
     calculate_bmi, classify_bmi, calculate_rda,
     RecommendationEngine, quick_recommend
 )
-from src.inference import FoodPredictor, MultiFoodDetector, analyse_meal_image
+from src.inference import FoodPredictor
+# MultiFoodDetector / analyse_meal_image live in their own module so the
+# original src/inference.py (also used by the training/Colab notebook)
+# stays untouched — see src/multi_food_detector.py for the fixed logic.
+from src.multi_food_detector import MultiFoodDetector, analyse_meal_image
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -586,14 +590,34 @@ def page_analyse_meal():
             portion_override = st.slider("Adjust portion size (g)", 50, 800, 200, 25)
 
         with col_result:
-            with st.spinner("🤖 Analysing your meal …"):
-                predictor, detector = load_predictor(tuple(st.session_state["class_names"]))
-                result = detector.detect_and_classify(image, top_k=5)
-                total  = detector.aggregate_nutrition(result)
+            try:
+                with st.spinner("🤖 Analysing your meal …"):
+                    predictor, detector = load_predictor(tuple(st.session_state["class_names"]))
+                    result = detector.detect_and_classify(image, top_k=5)
+                    total  = detector.aggregate_nutrition(result)
 
-                # Scale nutrition to portion override
-                det    = result["detections"]
-                mode   = result["mode"]
+                    # Scale nutrition to portion override
+                    det    = result["detections"]
+                    mode   = result["mode"]
+            except Exception as e:
+                st.error(
+                    "⚠️ Something went wrong analysing this image. This is usually "
+                    "a missing model checkpoint or a corrupted upload — try a "
+                    "different photo, or check the terminal logs for details."
+                )
+                st.caption(f"Details: {e}")
+                st.stop()
+
+            with st.expander("🩺 Detection diagnostics"):
+                n_yolo = sum(1 for d in det if d.get("source") == "yolo")
+                n_seg  = sum(1 for d in det if d.get("source") == "segmentation")
+                n_full = sum(1 for d in det if d.get("source") == "full_image")
+                st.write(
+                    f"YOLO boxes used: **{n_yolo}** · "
+                    f"Segmentation regions used: **{n_seg}** · "
+                    f"Full-image fallback: **{n_full}** · "
+                    f"Total items: **{len(det)}**"
+                )
 
             # ── Detection mode badge ───────────────────────────────────
             st.markdown(
