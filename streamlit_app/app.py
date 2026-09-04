@@ -4,7 +4,7 @@ NutriVision AI — Full Streamlit Application
 Pages:
   1. 🏠 Home / Dashboard
   2. 📸 Analyse Meal
-  3. 📊 Daily Tracker
+  # 3. 📊 Daily Tracker
   4. 👤 My Profile
   5. 📈 Model Insights
   6. ℹ️  About
@@ -371,10 +371,10 @@ def render_sidebar() -> str:
         page = st.selectbox(
             "Navigate",
             ["🏠 Home", "📸 Analyse Meal", "📊 Daily Tracker",
-             "👤 My Profile", "📈 Model Insights", "ℹ️  About"],
+             "👤 My Profile", "ℹ️  About"],
             label_visibility="collapsed",
         )
-
+        # "📈 Model Insights"
         # Quick stats in sidebar
         if st.session_state["username"] != "guest":
             st.markdown("---")
@@ -1146,8 +1146,8 @@ def page_about():
     st.markdown("---")
     st.markdown("""
     <div style="text-align:center;color:#94a3b8;font-size:0.85rem;padding:20px 0;">
-      NutriVision AI v1.0 · Built with PyTorch, Streamlit & 💙 ·
-      Academic Research Project · Nnorom Joshua
+      NutriVision AI v1.0 · Built with PyTorch, Streamlit & More Liberies ·
+      Academic Masters Research Project · Joshua Nnorom
     </div>
     """, unsafe_allow_html=True)
 
