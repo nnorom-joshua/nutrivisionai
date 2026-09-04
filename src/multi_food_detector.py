@@ -6,10 +6,13 @@ Streamlit-app-only variant of the multi-food detection pipeline.
 WHY THIS FILE EXISTS
 ---------------------
 `src/inference.py` is also imported by the training/Colab notebook, so it's
-left completely untouched. This module reuses everything from
-`src/inference.py` that didn't need to change (FoodPredictor, estimate_portion,
-segment_food_regions, DEFAULT_PORTION_G) and only reimplements
-`MultiFoodDetector`, with the multi-food bug fixed.
+left completely untouched. This module only imports `FoodPredictor` from
+`src/inference.py` — everything else it needs (portion estimation, region
+segmentation, the fixed `MultiFoodDetector`) is defined locally below, so it
+can't break if `inference.py` changes or if the deployed copy of it differs
+from what's expected (this actually happened once already: the deployed
+`inference.py` didn't have `segment_food_regions`, even though a local copy
+did).
 
 THE BUG THIS FIXES
 -------------------
@@ -31,18 +34,152 @@ moment YOLO fired at all.
 import logging
 from typing import Dict, List, Optional, Tuple
 
+import cv2
 import numpy as np
 from PIL import Image
 
 from configs.config import YOLO_MODEL, YOLO_CONF, YOLO_IOU
 from src.database import get_nutrition
-from src.inference import (
-    FoodPredictor,
-    estimate_portion,
-    segment_food_regions,
-)
+from src.inference import FoodPredictor
 
 log = logging.getLogger(__name__)
+
+
+# ─── Portion Estimator (local copy — see module docstring) ────────────────────
+DEFAULT_PORTION_G = {
+    "apple_pie": 150, "baby_back_ribs": 300, "baklava": 60,
+    "beef_carpaccio": 120, "beef_tartare": 150, "beet_salad": 180,
+    "beignets": 80,  "bibimbap": 350, "bread_pudding": 180,
+    "breakfast_burrito": 220, "bruschetta": 100, "caesar_salad": 200,
+    "cannoli": 90,   "caprese_salad": 180, "carrot_cake": 120,
+    "ceviche": 180,  "cheesecake": 120, "cheese_plate": 100,
+    "chicken_curry": 300, "chicken_quesadilla": 200, "chicken_wings": 250,
+    "chocolate_cake": 120, "chocolate_mousse": 120, "churros": 100,
+    "clam_chowder": 300, "club_sandwich": 250, "crab_cakes": 180,
+    "creme_brulee": 150, "croque_madame": 200, "cup_cakes": 100,
+    "deviled_eggs": 80, "donuts": 80, "dumplings": 150,
+    "edamame": 120, "eggs_benedict": 250, "escargots": 120,
+    "falafel": 150, "filet_mignon": 200, "fish_and_chips": 350,
+    "foie_gras": 80, "french_fries": 150, "french_onion_soup": 350,
+    "french_toast": 200, "fried_calamari": 200, "fried_rice": 300,
+    "frozen_yogurt": 180, "garlic_bread": 100, "gnocchi": 250,
+    "greek_salad": 250, "grilled_cheese_sandwich": 200, "grilled_salmon": 200,
+    "guacamole": 100, "gyoza": 150, "hamburger": 250,
+    "hot_and_sour_soup": 350, "hot_dog": 180, "huevos_rancheros": 250,
+    "hummus": 100, "ice_cream": 150, "lasagna": 300,
+    "lobster_bisque": 350, "lobster_roll_sandwich": 250, "macaroni_and_cheese": 300,
+    "macarons": 40, "miso_soup": 300, "mussels": 250,
+    "nachos": 200, "omelette": 200, "onion_rings": 150,
+    "oysters": 120, "pad_thai": 350, "paella": 350,
+    "pancakes": 200, "panna_cotta": 120, "peking_duck": 250,
+    "pho": 400, "pizza": 200, "pork_chop": 200,
+    "poutine": 300, "prime_rib": 300, "pulled_pork_sandwich": 300,
+    "ramen": 400, "ravioli": 250, "red_velvet_cake": 120,
+    "risotto": 300, "samosa": 100, "sashimi": 150,
+    "scallops": 150, "seaweed_salad": 150, "shrimp_and_grits": 300,
+    "spaghetti_bolognese": 350, "spaghetti_carbonara": 300, "spring_rolls": 120,
+    "steak": 250, "strawberry_shortcake": 150, "sushi": 180,
+    "tacos": 200, "takoyaki": 150, "tiramisu": 150,
+    "tuna_tartare": 150, "waffles": 180,
+}
+
+
+def estimate_portion(food_name: str, bbox_area: Optional[float] = None,
+                     image_area: Optional[float] = None) -> float:
+    """
+    Estimate portion size in grams.
+    If bbox and image areas are provided, scale default portion by bbox ratio.
+    """
+    base = DEFAULT_PORTION_G.get(food_name, 150)
+    if bbox_area and image_area and image_area > 0:
+        area_ratio = min(bbox_area / image_area, 1.0)
+        # Map ratio to portion multiplier: 0.1→0.5x, 0.5→1x, 1.0→2x
+        scale = max(0.4, min(2.0, area_ratio * 4))
+        return round(base * scale)
+    return float(base)
+
+
+# ─── Class-agnostic region segmentation (YOLO fallback) ───────────────────────
+def segment_food_regions(
+    image: Image.Image,
+    min_area_ratio: float = 0.03,
+    max_area_ratio: float = 0.65,
+    max_regions: int = 4,
+) -> List[Tuple[int, int, int, int]]:
+    """
+    Splits an image into candidate food regions without needing to know what
+    the food is. Used when YOLO (trained on COCO's 80 classes) fails to find
+    any boxes -- which happens for most Food-101 dishes since they aren't
+    COCO categories.
+
+    Strategy:
+      1. Cluster pixels by colour in LAB space into a handful of groups.
+      2. Identify the cluster that most resembles background/plate (the one
+         with the most image-border pixels) and discard it.
+      3. Extract contours -> bounding boxes from the remaining clusters.
+      4. Drop boxes that are too small, too large (likely still background),
+         or near-duplicates of a larger box.
+
+    Returns a list of (x1, y1, x2, y2) boxes. Classification of each crop is
+    still done downstream by FoodPredictor -- this function only proposes
+    regions, it never predicts a class itself.
+    """
+    img_np = np.array(image.convert("RGB"))
+    h, w = img_np.shape[:2]
+    img_area = h * w
+
+    lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
+    Z = lab.reshape((-1, 3)).astype(np.float32)
+
+    k = max_regions
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+    _, labels, _ = cv2.kmeans(Z, k, None, criteria, 5, cv2.KMEANS_PP_CENTERS)
+    labels = labels.reshape((h, w))
+
+    border_mask = np.zeros((h, w), dtype=bool)
+    border_mask[0, :] = border_mask[-1, :] = True
+    border_mask[:, 0] = border_mask[:, -1] = True
+    border_counts = [int(((labels == cid) & border_mask).sum()) for cid in range(k)]
+    bg_cluster = int(np.argmax(border_counts))
+
+    boxes = []
+    for cid in range(k):
+        if cid == bg_cluster:
+            continue
+        mask = np.uint8(labels == cid) * 255
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            area = cv2.contourArea(c)
+            ratio = area / img_area
+            if ratio < min_area_ratio or ratio > max_area_ratio:
+                continue
+            x, y, bw, bh = cv2.boundingRect(c)
+            boxes.append((x, y, x + bw, y + bh, area))
+
+    if not boxes:
+        return []
+
+    boxes.sort(key=lambda b: b[4], reverse=True)
+    kept = []
+    for b in boxes:
+        x1, y1, x2, y2, area = b
+        is_dup = False
+        for kx1, ky1, kx2, ky2, _ in kept:
+            ix1, iy1 = max(x1, kx1), max(y1, ky1)
+            ix2, iy2 = min(x2, kx2), min(y2, ky2)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            if inter / area > 0.85:
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append(b)
+        if len(kept) >= max_regions:
+            break
+
+    return [(x1, y1, x2, y2) for x1, y1, x2, y2, _ in kept]
 
 
 class MultiFoodDetector:
