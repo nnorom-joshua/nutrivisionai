@@ -368,7 +368,7 @@ def render_sidebar() -> str:
             st.session_state["username"] = username
 
         st.markdown("---")
-        st.text("Menu - click to choose")
+        st.markdown("<h5 style='color:lightgreen'>Menu - click to choose</h5>")
         page = st.selectbox(
             "Navigate",
             ["🏠 Home", "📸 Analyse Meal", "📊 Daily Tracker",
